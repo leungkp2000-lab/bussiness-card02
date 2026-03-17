@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>電子名片</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: #ffffff;
+      font-family: Arial, "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    }
+
+    body {
+      padding:
+        max(10px, env(safe-area-inset-top))
+        10px
+        max(10px, env(safe-area-inset-bottom));
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+    }
+
+    .page {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+    }
+
+    .card-shell {
+      width: min(99vw, 980px);
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: pan-y;
+    }
+
+    .viewer-window {
+      width: 100%;
+      overflow: hidden;
+      border-radius: 6mm;
+    }
+
+    .viewer-track {
+      display: flex;
+      width: 200%;
+      transform: translateX(0%);
+      transition: transform 0.28s ease;
+      will-change: transform;
+    }
+
+    .viewer-track.dragging {
+      transition: none;
+    }
+
+    .slide {
+      width: 50%;
+      flex: 0 0 50%;
+      display: flex;
+      justify-content: center;
+    }
+
+    .card-frame-button {
+      width: 100%;
+      display: block;
+      appearance: none;
+      -webkit-appearance: none;
+      background: #ffffff;
+      border: none;
+      padding: 0.1mm;
+      margin: 0;
+      cursor: pointer;
+      border-radius: 6mm;
+      overflow: hidden;
+      line-height: 0;
+    }
+
+    .card-image {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 1.9mm;
+      pointer-events: none;
+      -webkit-user-drag: none;
+      user-select: none;
+    }
+
+    .zoom-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      background: rgba(0, 0, 0, 0.94);
+    }
+
+    .zoom-overlay.show {
+      display: flex;
+    }
+
+    .zoom-inner {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .zoom-image {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      background: transparent;
+      border-radius: 0;
+      -webkit-user-drag: none;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    .zoom-close {
+      position: absolute;
+      top: 0;
+      right: 0;
+      z-index: 10;
+      min-width: 84px;
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: rgba(255,255,255,0.14);
+      color: #ffffff;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+
+    @media (max-width: 640px) {
+      body {
+        padding:
+          max(8px, env(safe-area-inset-top))
+          8px
+          max(8px, env(safe-area-inset-bottom));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="card-shell" id="cardShell">
+      <div class="viewer-window">
+        <div class="viewer-track" id="viewerTrack">
+          <div class="slide">
+            <button class="card-frame-button" id="frontBtn" aria-label="名片正面">
+              <img class="card-image" src="card-front.png" alt="名片正面" draggable="false" />
+            </button>
+          </div>
+          <div class="slide">
+            <button class="card-frame-button" id="backBtn" aria-label="名片背面">
+              <img class="card-image" src="card-back.png" alt="名片背面" draggable="false" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="zoom-overlay" id="zoomOverlay">
+    <div class="zoom-inner">
+      <button class="zoom-close" id="zoomCloseBtn">關閉</button>
+      <img class="zoom-image" id="zoomImage" src="" alt="放大名片" draggable="false" />
+    </div>
+  </div>
+
+  <script>
+    const cardShell = document.getElementById("cardShell");
+    const viewerTrack = document.getElementById("viewerTrack");
+    const frontBtn = document.getElementById("frontBtn");
+    const backBtn = document.getElementById("backBtn");
+
+    const zoomOverlay = document.getElementById("zoomOverlay");
+    const zoomImage = document.getElementById("zoomImage");
+    const zoomCloseBtn = document.getElementById("zoomCloseBtn");
+
+    const images = [
+      { src: "card-front.png", label: "正面" },
+      { src: "card-back.png", label: "背面" }
+    ];
+
+    let currentIndex = 0;
+
+    function clampIndex(index) {
+      return Math.max(0, Math.min(1, index));
+    }
+
+    function setMainTrackByIndex(animated = true) {
+      if (animated) {
+        viewerTrack.classList.remove("dragging");
+      } else {
+        viewerTrack.classList.add("dragging");
+      }
+
+      const base = currentIndex === 0 ? 0 : -50;
+      viewerTrack.style.transform = `translateX(${base}%)`;
+    }
+
+    function goTo(index, animated = true) {
+      currentIndex = clampIndex(index);
+      setMainTrackByIndex(animated);
+    }
+
+    function nextFace() {
+      goTo(currentIndex === 0 ? 1 : 0, true);
+    }
+
+    function prevFace() {
+      goTo(currentIndex === 1 ? 0 : 1, true);
+    }
+
+    function openZoom(index) {
+      currentIndex = clampIndex(index);
+      zoomImage.src = images[currentIndex].src;
+      zoomImage.alt = "放大名片" + images[currentIndex].label;
+      zoomOverlay.classList.add("show");
+      setMainTrackByIndex(false);
+    }
+
+    function closeZoom() {
+      zoomOverlay.classList.remove("show");
+      zoomImage.src = "";
+    }
+
+    function getPoint(event) {
+      if (event.touches && event.touches.length > 0) {
+        return {
+          x: event.touches[0].clientX,
+          y: event.touches[0].clientY
+        };
+      }
+
+      if (event.changedTouches && event.changedTouches.length > 0) {
+        return {
+          x: event.changedTouches[0].clientX,
+          y: event.changedTouches[0].clientY
+        };
+      }
+
+      return {
+        x: event.clientX,
+        y: event.clientY
+      };
+    }
+
+    function createSwipeController(onTapIndex) {
+      let startX = 0;
+      let startY = 0;
+      let pointerDown = false;
+      let dragging = false;
+      let horizontalLocked = false;
+
+      const swipeThreshold = 50;
+      const tapMoveThreshold = 10;
+      const gestureLockThreshold = 8;
+
+      function start(event) {
+        if (zoomOverlay.classList.contains("show")) return;
+
+        const point = getPoint(event);
+        startX = point.x;
+        startY = point.y;
+        pointerDown = true;
+        dragging = false;
+        horizontalLocked = false;
+      }
+
+      function move(event) {
+        if (!pointerDown) return;
+
+        const point = getPoint(event);
+        const deltaX = point.x - startX;
+        const deltaY = point.y - startY;
+
+        if (!dragging) {
+          if (
+            Math.abs(deltaX) > gestureLockThreshold ||
+            Math.abs(deltaY) > gestureLockThreshold
+          ) {
+            dragging = true;
+            horizontalLocked = Math.abs(deltaX) > Math.abs(deltaY);
+          }
+        }
+
+        if (!dragging || !horizontalLocked) return;
+
+        viewerTrack.classList.add("dragging");
+
+        const width = cardShell.clientWidth || 1;
+        const movePercent = (deltaX / width) * 100;
+        const basePercent = currentIndex === 0 ? 0 : -50;
+        let nextPercent = basePercent + movePercent / 2;
+
+        if (nextPercent > 0) nextPercent = 0;
+        if (nextPercent < -50) nextPercent = -50;
+
+        viewerTrack.style.transform = `translateX(${nextPercent}%)`;
+
+        if (event.cancelable) {
+          event.preventDefault();
+        }
+      }
+
+      function end(event) {
+        if (!pointerDown) return;
+
+        const point = getPoint(event);
+        const deltaX = point.x - startX;
+        const deltaY = point.y - startY;
+
+        pointerDown = false;
+
+        if (dragging && horizontalLocked) {
+          if (Math.abs(deltaX) > swipeThreshold && Math.abs(deltaX) > Math.abs(deltaY)) {
+            if (deltaX < 0) {
+              nextFace();
+            } else {
+              prevFace();
+            }
+          } else {
+            setMainTrackByIndex(true);
+          }
+          return;
+        }
+
+        if (Math.abs(deltaX) < tapMoveThreshold && Math.abs(deltaY) < tapMoveThreshold) {
+          openZoom(onTapIndex);
+          return;
+        }
+
+        setMainTrackByIndex(true);
+      }
+
+      return { start, move, end };
+    }
+
+    const frontSwipe = createSwipeController(0);
+    const backSwipe = createSwipeController(1);
+
+    frontBtn.addEventListener("touchstart", frontSwipe.start, { passive: true });
+    frontBtn.addEventListener("touchmove", frontSwipe.move, { passive: false });
+    frontBtn.addEventListener("touchend", frontSwipe.end);
+
+    backBtn.addEventListener("touchstart", backSwipe.start, { passive: true });
+    backBtn.addEventListener("touchmove", backSwipe.move, { passive: false });
+    backBtn.addEventListener("touchend", backSwipe.end);
+
+    frontBtn.addEventListener("mousedown", frontSwipe.start);
+    backBtn.addEventListener("mousedown", backSwipe.start);
+
+    window.addEventListener("mousemove", (event) => {
+      frontSwipe.move(event);
+      backSwipe.move(event);
+    });
+
+    window.addEventListener("mouseup", (event) => {
+      frontSwipe.end(event);
+      backSwipe.end(event);
+    });
+
+    frontBtn.addEventListener("click", (event) => event.preventDefault());
+    backBtn.addEventListener("click", (event) => event.preventDefault());
+
+    zoomCloseBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeZoom();
+    });
+
+    zoomOverlay.addEventListener("click", (event) => {
+      if (event.target === zoomOverlay) {
+        closeZoom();
+      }
+    });
+
+    setMainTrackByIndex(false);
+  </script>
+</body>
+</html>
